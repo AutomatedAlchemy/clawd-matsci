@@ -3,6 +3,8 @@
 A mod for [Claude Code](https://code.claude.com): Clawd, the small creature from the
 Claude Code banner, runs around in a strip above your prompt and reacts to the session.
 
+![The strip above the prompt during a session](demo.gif)
+
 **In this version Clawd is the MatSci octopus**, a blue octopus with wiggling
 tentacles, all the time. Other looks (`/clawd emote ...`) take over for a while, then the
 octopus comes back. The small Clawds for subagents stay small Clawds. The octopus is two
