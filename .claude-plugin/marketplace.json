@@ -1,0 +1,14 @@
+{
+  "name": "clawd",
+  "description": "The Claude Code mod clawd.",
+  "owner": {
+    "name": "Steffen Probst"
+  },
+  "plugins": [
+    {
+      "name": "clawd",
+      "source": "./plugin",
+      "description": "Clawd, the Claude Code logo, runs around in the band above the prompt and reacts to the session."
+    }
+  ]
+}
