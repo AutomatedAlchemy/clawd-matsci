@@ -1,7 +1,9 @@
 {
   "name": "clawd",
   "version": "0.1.1",
-  "description": "Clawd, the Claude Code logo, runs around in the band above the prompt and reacts to the session.",
-  "author": { "name": "Steffen Probst" },
+  "description": "The MatSci octopus runs around in the band above the Claude Code prompt and reacts to the session.",
+  "author": {
+    "name": "Steffen Probst"
+  },
   "types": "./types/index.d.ts"
 }

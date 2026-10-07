@@ -8,7 +8,7 @@
     {
       "name": "clawd",
       "source": "./plugin",
-      "description": "Clawd, the Claude Code logo, runs around in the band above the prompt and reacts to the session."
+      "description": "The MatSci octopus runs around in the band above the Claude Code prompt and reacts to the session."
     }
   ]
 }

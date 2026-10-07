@@ -1,15 +1,15 @@
 # clawd-matsci
 
-A mod for [Claude Code](https://code.claude.com): Clawd, the small creature from the
-Claude Code banner, runs around in a strip above your prompt and reacts to the session.
+A mod for [Claude Code](https://code.claude.com): the MatSci octopus, a blue octopus with
+wiggling tentacles, runs around in a strip above your prompt and reacts to the session.
 
 ![The strip above the prompt during a session](demo.gif)
 
-**In this version Clawd is the MatSci octopus**, a blue octopus with wiggling
-tentacles, all the time. Other looks (`/clawd emote ...`) take over for a while, then the
-octopus comes back. The small Clawds for subagents stay small Clawds. The octopus is two
-rows taller than Clawd, so the strip is 5 rows high instead of 4; in a terminal too short
-for that, Clawd shows as Clawd. The plain version is
+It is the `clawd` mod with the octopus as its permanent look, so the mod and its commands
+call it Clawd. Other looks (`/clawd emote ...`) take over for a while, then the octopus
+comes back. Subagents get small Clawds, the creature from the Claude Code banner. The
+octopus is two rows taller than Clawd, so the strip is 5 rows high instead of 4; in a
+terminal too short for that, Clawd shows in its own look. The plain version is
 [Probst1nator/clawd](https://github.com/Probst1nator/clawd). Install one or the other:
 both are the plugin `clawd`.
 
