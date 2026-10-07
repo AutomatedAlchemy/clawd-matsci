@@ -1,6 +1,6 @@
 {
-  "name": "clawd",
-  "description": "The Claude Code mod clawd.",
+  "name": "clawd-matsci",
+  "description": "The Claude Code mod clawd with the MatSci octopus.",
   "owner": {
     "name": "Steffen Probst"
   },

@@ -1,10 +1,15 @@
-# clawd
+# clawd-matsci
 
 A mod for [Claude Code](https://code.claude.com): Clawd, the small creature from the
 Claude Code banner, runs around in a strip above your prompt and reacts to the session.
 
-There is also a version in which Clawd is the MatSci octopus:
-[AutomatedAlchemy/clawd-matsci](https://github.com/AutomatedAlchemy/clawd-matsci).
+**In this version Clawd is the MatSci octopus**, a blue octopus with wiggling
+tentacles, all the time. Other looks (`/clawd emote ...`) take over for a while, then the
+octopus comes back. The small Clawds for subagents stay small Clawds. The octopus is two
+rows taller than Clawd, so the strip is 5 rows high instead of 4; in a terminal too short
+for that, Clawd shows as Clawd. The plain version is
+[Probst1nator/clawd](https://github.com/Probst1nator/clawd). Install one or the other:
+both are the plugin `clawd`.
 
 - It hops when you send a prompt.
 - It holds up a scroll while Claude only reads, and stacks a brick for every other tool
@@ -18,13 +23,13 @@ This is a fan project. Anthropic did not make it and does not endorse it.
 ## Install
 
 ```bash
-claude plugin marketplace add Probst1nator/clawd
-claude plugin install clawd@clawd
+claude plugin marketplace add AutomatedAlchemy/clawd-matsci
+claude plugin install clawd@clawd-matsci
 ```
 
 Start a new session. `/clawd help` explains the rest. `/clawd off` hides Clawd (it
 stays hidden in later sessions until `/clawd on`), and
-`claude plugin disable clawd@clawd` turns the mod off.
+`claude plugin disable clawd@clawd-matsci` turns the mod off.
 
 Tested with Claude Code 2.1.292. The mod uses plugin hooks that draw into the terminal,
 so older versions may not load it.
