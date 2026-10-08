@@ -1,6 +1,6 @@
 {
   "name": "clawd",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "The MatSci octopus runs around in the band above the Claude Code prompt and reacts to the session.",
   "author": {
     "name": "Steffen Probst"
