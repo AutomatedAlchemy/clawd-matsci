@@ -2,6 +2,7 @@ import type { RenderElement } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  bandRows,
   callActs,
   createWorld,
   emoteFrom,
@@ -329,7 +330,7 @@ test('an emote step puts on a look and the act goes on in it; a play step plays 
   expect(w.wearing?.name).toBe('octo')
 })
 
-test('the picker asks for a new act and plays it before it exists, Opus writes it, the band shows it, and the trace keeps the pick', async ($, on) => {
+test('the picker asks for a new act and plays it before it exists, Opus writes it, the band shows it, and the trace and debug keep the pick', async ($, on) => {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', CLAUDE_CLAWD_SEED: '7' })
@@ -337,7 +338,11 @@ test('the picker asks for a new act and plays it before it exists, Opus writes i
   const files = new Map<string, string>()
   const asked: string[] = []
   const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
-  on('ui.log', async () => ({ value: undefined }))
+  const logs: string[] = []
+  on('ui.log', async ($, e) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
   on('ui.blit', async ($, e) => {
     if ('cells' in e) blits.push(e.cells)
@@ -360,7 +365,7 @@ test('the picker asks for a new act and plays it before it exists, Opus writes i
   on('model.complete', async ($, e) => {
     asked.push(e.model)
     const text =
-      e.model === 'sonnet'
+      e.model === 'haiku'
         ? '{"summary": "Tests went green.", "calls": [{"who": "clawd", "play": "victory_lap", "delay": 0}], "why": "green tests", "new": {"name": "victory_lap", "title": "Victory lap after green tests", "for": "clawd"}}'
         : '{"steps": [{"do": "run", "to": 0.9}, {"do": "hop", "n": 2, "sparks": true}, {"do": "wave", "dur": 1}]}'
     return { value: { isAnswered: true as const, text, usage } }
@@ -383,22 +388,33 @@ test('the picker asks for a new act and plays it before it exists, Opus writes i
   const run = (args: string) =>
     $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
   expect((await run('trace'))?.text).toContain('/home/t/.claude/clawd/picks/sess-1.jsonl')
-  await run('autopick')
+  const debugOn = (await run('debug'))?.text
+  expect(debugOn).toMatch(/^Clawd: debug on\./)
+  expect(debugOn).toContain('Autopick is off, so only /clawd autopick now picks')
+  await run('autopick now')
   await clock.advance(200)
 
-  expect(asked).toEqual(['sonnet', 'opus'])
+  expect(asked).toEqual(['haiku', 'opus'])
   const trace = [...files.entries()].find(([p]) => p.includes('/home/t/.claude/clawd/picks/'))?.[1] ?? ''
   const traced = JSON.parse(trace.trim().split('\n').pop() ?? '{}')
-  expect(traced.trigger).toBe('asked with /clawd autopick')
+  expect(traced.trigger).toBe('asked with /clawd autopick now')
   expect(traced.system).toMatch(/^You direct Clawd/)
   expect(traced.prompt).toContain('<new_since_your_last_pick>')
   expect(traced.outcome).toBe('played nothing; new act victory_lap made')
+  const debug = logs.findIndex(l => l.startsWith('Clawd debug'))
+  expect(logs.slice(debug)).toEqual([
+    'Clawd debug · autopick, asked with /clawd autopick now · haiku · 1 tokens in, 1 out',
+    `reply: ${traced.reply}`,
+    '→ played nothing; new act victory_lap made',
+  ])
+  expect((await run('debug'))?.text).toBe('Clawd: debug off.')
+  expect((await run('trace'))?.text).toBe('Clawd: autopicks are no longer traced.')
   const path = [...files.keys()].find(p => p === '/home/t/.claude/clawd/acts/victory_lap.json')
   const saved = JSON.parse(files.get(path ?? '') ?? '{}')
   expect(saved.title).toBe('Victory lap after green tests')
   expect(saved.steps.length).toBe(3)
   expect(rows(blits[blits.length - 1] ?? '', 100)[0]).toMatch(/clawd: victory_lap \(new\) "Victory lap after green tests"$/)
-  expect((await run(''))?.text).toContain('Last autopick (asked with /clawd autopick')
+  expect((await run(''))?.text).toContain('Last autopick (asked with /clawd autopick now')
 })
 
 test('a mini Clawd comes for a subagent, takes parallel calls with a delay, and leaves when it is done', async () => {
@@ -720,7 +736,7 @@ test('with a base look Clawd wears it from the start without a puff, another emo
   expect(low.wearing?.name).toBe('octo')
 })
 
-test('the autopicker calls no model until /clawd autopick on, picks on its timer once on, and stops when off', async ($, on) => {
+test('the autopicker calls no model until /clawd autopick switches it on, picks on its timer once on, and stops when switched off', { timeoutMs: 20_000 }, async ($, on) => {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', CLAUDE_CLAWD_SEED: '7' })
@@ -744,29 +760,33 @@ test('the autopicker calls no model until /clawd autopick on, picks on its timer
   })
 
   await $.session.start({ cwd: '/home/t/proj', surface: 'terminal', isInteractive: true })
+  const run = (args: string) =>
+    $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
+  // 61 s: a pick comes within PICK_MAX_S. Each 50 ms band tick costs about a
+  // millisecond, so the minutes here run past the default 5 s on a loaded
+  // machine; the band, which a pick needs, is mounted from the second phase on.
+  await clock.advance(61_000)
+  expect(triggers).toEqual([])
+  expect((await run(''))?.text).toContain('The autopicker is off, so Clawd plays random acts')
+  expect((await run('autopick o'))?.text).toBe('Clawd: /clawd autopick takes now, on, off or nothing.')
+
   await $.ui.mount({
     plugin: 'clawd',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 40, scroll: { offset: 0, bodyRows: 20 }, view: {} },
     viewport: { columns: 100, rows: 40 },
   })
-  const run = (args: string) =>
-    $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
-  await clock.advance(70_000)
-  expect(triggers).toEqual([])
-  expect((await run(''))?.text).toContain('The autopicker is off, so Clawd plays random acts')
-  expect((await run('autopick o'))?.text).toBe('Clawd: /clawd autopick takes on, off or nothing.')
-
-  expect((await run('autopick on'))?.text).toContain('the autopicker is on (remembered)')
-  await clock.advance(70_000)
+  expect((await run('autopick'))?.text).toContain('the autopicker is on (remembered)')
+  await clock.advance(61_000)
   expect(triggers.length).toBeGreaterThan(0)
+  expect((await run('autopick'))?.text).toContain('the autopicker is off (remembered)')
   expect((await run('autopick of'))?.text).toContain('the autopicker is off (remembered)')
   const picked = triggers.length
-  await clock.advance(70_000)
+  await clock.advance(61_000)
   expect(triggers.length).toBe(picked)
   // Asked for, it picks once while off.
-  await run('autopick')
+  await run('autopick now')
   await clock.advance(200)
   expect(triggers.length).toBe(picked + 1)
 })
@@ -787,24 +807,33 @@ test('an emote preview is a PNG of the band in every pose, and a drafts sheet ha
   expect([propHead.getUint32(16), propHead.getUint32(20)]).toEqual([6 * 144 + 4, 4 * 104 + 4])
 })
 
-test('a wiggly look crawls in a ripple, one tip lifted at a time and the body level, and its tips trail when it runs', async () => {
+test('a wiggly look crawls in a ripple, one tip lifted at a time and the body level, walking and running', async () => {
   const look = emoteFrom(OCTOPUS) as Emote
-  const frame = (vx: number, walked: number): string[] => {
+  const frame = (vx: number, strides: number): string[] => {
     const w = createWorld(14, 5, seeded(1))
     w.queue = []
-    Object.assign(w, { x: 14, t: 5, blinkAt: 999, wearing: look, wornAt: 5, wornUntil: Infinity, vx, walked })
+    Object.assign(w, { x: 14, t: 5, blinkAt: 999, wearing: look, wornAt: 5, wornUntil: Infinity, vx, strides })
     return rows(frameCells(w), 14)
   }
   const top = (band: string[]) => band.findIndex(line => line.trim() !== '')
-  // A stride is 8 sub-pixels. Each third of it lifts another of the three legs, then it repeats.
-  const thirds = [0, 8 / 3, 16 / 3].map(d => frame(WALK, d).join('\n'))
+  // Each third of a stride lifts another of the three legs, then it repeats.
+  const thirds = [0, 1 / 3, 2 / 3].map(d => frame(WALK, d).join('\n'))
   expect(new Set(thirds).size).toBe(3)
-  expect(frame(WALK, 8).join('\n')).toBe(thirds[0])
+  expect(frame(WALK, 1).join('\n')).toBe(thirds[0])
   // The body does not bob: it stands where it stands still.
-  for (const d of [0, 2, 4, 6]) expect(top(frame(WALK, d))).toBe(top(frame(0, 0)))
-  // Running, the tips trail whatever the distance.
-  expect(frame(WALK * 3, 0)).toEqual(frame(WALK * 3, 4))
-  expect(frame(WALK * 3, 0)).not.toEqual(frame(WALK, 0))
+  for (const d of [0, 0.25, 0.5, 0.75]) expect(top(frame(WALK, d))).toBe(top(frame(0, 0)))
+  // Running, it ripples the same way.
+  const running = [0, 1 / 3, 2 / 3].map(d => frame(WALK * 3, d).join('\n'))
+  expect(new Set(running).size).toBe(3)
+  expect(frame(WALK * 3, 1).join('\n')).toBe(running[0])
+  // A stride is 8 sub-pixels walking and 16 running.
+  for (const [act, length] of [['wander', 8], ['run', 16]] as const) {
+    const w = createWorld(80, 5, seeded(1))
+    w.x = 10
+    perform(w, act)
+    for (let i = 0; i < 20; i++) step(w)
+    expect(Math.round(w.walked / w.strides)).toBe(length)
+  }
 })
 
 // The octopus beside a rocket that lifts off at 2 s and leaves the band by 3 s.
@@ -906,7 +935,7 @@ test("an emote's tool is checked, written back, held past the front hand as Claw
   expect(cellsWith(frameCells(w), 40, 0x8b5a2b)).toEqual([])
 })
 
-test('/clawd create has a model draw three drafts after a local image, pick one from their sheet, check its preview, and it plays', async ($, on) => {
+test('/clawd emote create has a model draw three drafts after a local image, pick one from their sheet, check its preview, and it plays', async ($, on) => {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', CLAUDE_CLAWD_SEED: '7' })
@@ -969,9 +998,10 @@ test('/clawd create has a model draw three drafts after a local image, pick one 
   await clock.advance(200)
   const run = (args: string) =>
     $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
-  expect((await run('create jump a frog'))?.text).toContain('jump is taken')
-  expect((await run('create frog'))?.text).toContain('Usage: /clawd create')
-  expect((await run('create octo ~/pics/octo.png a blue octopus'))?.text).toContain('draws octo after /home/t/pics/octo.png')
+  expect((await run('emote create jump a frog'))?.text).toContain('jump is taken')
+  expect((await run('emote create frog'))?.text).toContain('Usage: /clawd emote create')
+  expect((await run('create frog a frog'))?.text).toBe('Clawd: that is /clawd emote create now.')
+  expect((await run('emote create octo ~/pics/octo.png a blue octopus'))?.text).toContain('draws octo after /home/t/pics/octo.png')
   await clock.advance(200)
 
   expect(rounds.length).toBe(3)
@@ -996,14 +1026,14 @@ test('/clawd create has a model draw three drafts after a local image, pick one 
   expect((await run('list emotes'))?.text).toMatch(/^  octo  a blue octopus$/m)
   expect((await run('emote oc'))?.text).toBe('Clawd: octo.')
   expect((await run('octo'))?.text).toBe('Clawd: octo.')
-  expect((await run('preview octo'))?.text).toContain(`${data}/emotes/previews/octo.png`)
+  expect((await run('emote preview octo'))?.text).toContain(`${data}/emotes/previews/octo.png`)
 
-  // /clawd change: the model starts from the look as it is, and the old file is kept.
+  // /clawd emote change (or edit, or modify): the model starts from the look as it is, and the old file is kept.
   const octoFile = `${data}/emotes/octo.json`
   const before = files.get(octoFile)
-  expect((await run('change oc blue'))?.text).toBe("Clawd: type the emote's full name: /clawd change octo.")
-  expect((await run('change octo'))?.text).toContain('Usage: /clawd change octo')
-  expect((await run('change octo make it blue'))?.text).toContain('a model changes octo: "make it blue"')
+  expect((await run('emote change oc blue'))?.text).toBe("Clawd: type the emote's full name: /clawd emote change octo.")
+  expect((await run('emote change octo'))?.text).toContain('Usage: /clawd emote change octo')
+  expect((await run('emote edit octo make it blue'))?.text).toContain('a model changes octo: "make it blue"')
   await clock.advance(200)
   expect(rounds.length).toBe(5)
   expect(rounds[3]?.stdin).toContain('The change asked for now: "make it blue"')
@@ -1017,9 +1047,9 @@ test('/clawd create has a model draw three drafts after a local image, pick one 
   expect(kept).toHaveLength(1)
   expect(files.get(kept[0] ?? '')).toBe(before)
 
-  // /clawd delete moves the file to data/emotes/old/, and the emote is gone.
-  expect((await run('dele octo'))?.text).toBe('Clawd: type delete in full; it removes an emote.')
-  expect((await run('delete octo'))?.text).toMatch(/^Clawd: octo is deleted\. Its file is now \/home\/t\/\.claude\/clawd\/emotes\/old\/octo\.[-0-9TZ]+\.json; move it back to undo\.$/)
+  // /clawd emote delete moves the file to data/emotes/old/, and the emote is gone.
+  expect((await run('emote dele octo'))?.text).toBe('Clawd: type delete in full; it removes an emote.')
+  expect((await run('emote delete octo'))?.text).toMatch(/^Clawd: octo is deleted\. Its file is now \/home\/t\/\.claude\/clawd\/emotes\/old\/octo\.[-0-9TZ]+\.json; move it back to undo\.$/)
   expect(files.has(octoFile)).toBe(false)
   expect((await run('list emotes'))?.text).not.toContain('octo')
 })
@@ -1046,13 +1076,17 @@ test('/clawd words may be cut short while they fit one name, and say what is wro
   expect(orderOf(['list'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: list what? /clawd list acts | made | emotes | minis.' })
   expect(orderOf(['pick'], NAMES)).toEqual({ kind: 'command', name: 'autopick', rest: [] })
   expect(orderOf(['of'], NAMES)).toEqual({ kind: 'command', name: 'off', rest: [] })
-  expect(orderOf(['cre', 'frog', 'a', 'frog'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: type create in full; it starts a model run.' })
-  expect(orderOf(['create', 'frog', 'a', 'frog'], NAMES)).toEqual({ kind: 'command', name: 'create', rest: ['frog', 'a', 'frog'] })
-  expect(orderOf(['delete', 'moon_jelly'], NAMES)).toEqual({ kind: 'command', name: 'delete', rest: ['moon_jelly'] })
-  expect(orderOf(['delete', 'moo'], NAMES)).toEqual({ kind: 'unclear', text: "Clawd: type the emote's full name: /clawd delete moon_jelly." })
-  expect(orderOf(['delete', 'frog'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: there is no emote frog. /clawd list emotes shows them.' })
-  expect(orderOf(['change'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: which emote? /clawd change <emote> <what to change>.' })
-  expect(orderOf(['chan', 'moon_jelly', 'blue'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: type change in full; it starts a model run.' })
+  expect(orderOf(['emote', 'cre', 'frog', 'a', 'frog'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: type create in full; it starts a model run.' })
+  expect(orderOf(['emote', 'create', 'frog', 'a', 'frog'], NAMES)).toEqual({ kind: 'command', name: 'create', rest: ['frog', 'a', 'frog'] })
+  expect(orderOf(['emote', 'delete', 'moon_jelly'], NAMES)).toEqual({ kind: 'command', name: 'delete', rest: ['moon_jelly'] })
+  expect(orderOf(['emote', 'delete', 'moo'], NAMES)).toEqual({ kind: 'unclear', text: "Clawd: type the emote's full name: /clawd emote delete moon_jelly." })
+  expect(orderOf(['emote', 'delete', 'frog'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: there is no emote frog. /clawd list emotes shows them.' })
+  expect(orderOf(['emote', 'change'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: which emote? /clawd emote change <emote> <what to change>.' })
+  expect(orderOf(['emote', 'chan', 'moon_jelly', 'blue'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: type change in full; it starts a model run.' })
+  expect(orderOf(['emote', 'modify', 'moon_jelly', 'blue'], NAMES)).toEqual({ kind: 'command', name: 'change', rest: ['moon_jelly', 'blue'] })
+  expect(orderOf(['emote', 'prev', 'moon_jelly'], NAMES)).toEqual({ kind: 'command', name: 'preview', rest: ['moon_jelly'] })
+  expect(orderOf(['delete', 'moon_jelly'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: that is /clawd emote delete now.' })
+  expect(orderOf(['edit', 'moon_jelly'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: that is /clawd emote change now.' })
   expect(orderOf(['xyz'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: nothing is called "xyz". /clawd help shows what there is.' })
   expect(orderOf(['o'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: "o" fits 3 names: on, off, octopus_wiggle. Type more of it.' })
   expect(orderOf(['act', 'moon'], NAMES)).toEqual({ kind: 'unclear', text: 'Clawd: moon_jelly is an emote; /clawd emote moon_jelly plays it.' })
@@ -1069,7 +1103,7 @@ test('while /clawd is typed, a framed list shows what the word fits, a space wri
   const top = menu('/clawd ')
   expect(top && menuLayout(top, 7)).toEqual({
     rows: ['help', 'act', 'emote', 'list', 'on', 'off', 'autopick'].map(name => ({ name, what: COMMANDS[name], from: 0, to: 0 })),
-    foot: '+6 more: trace preview create change delete a1',
+    foot: '+3 more: trace debug a1',
   })
   expect(menu('/clawd act c')).toEqual({
     title: '/clawd act',
@@ -1092,15 +1126,16 @@ test('while /clawd is typed, a framed list shows what the word fits, a space wri
   })
   expect(menu('/clawd wave')).toMatchObject({ note: '', isOne: true, rows: [{ name: 'wave', what: 'act: waves' }] })
   // At the top the kinds mix, so each row says its kind, and no next step is shared.
-  expect(menu('/clawd o')).toMatchObject({ count: '3 of 21 fit', next: '' })
+  expect(menu('/clawd o')).toMatchObject({ count: '3 of 18 fit', next: '' })
   expect(menu('/clawd o')?.rows[2]).toEqual({ name: 'octopus_wiggle', what: 'made act: turns into an octopus', from: 0, to: 1 })
   expect(menu('/clawd wig')?.rows).toEqual([{ name: 'octopus_wiggle', what: 'made act: turns into an octopus', from: 8, to: 11 }])
   const o = menu('/clawd o')
-  expect(o && menuLayout(o, 2).foot).toBe('3 of 21 fit · +1 more: octopus_wiggle')
+  expect(o && menuLayout(o, 2).foot).toBe('3 of 18 fit · +1 more: octopus_wiggle')
   expect(menu('/clawd act ')).toMatchObject({ title: '/clawd act', note: '7 acts' })
   expect(names('/clawd act ')).toEqual(['octopus_wiggle', 'build', 'jump', 'hop', 'celebrate', 'chase', 'wave'])
   expect(names('/clawd a1 ')).toEqual(['octopus_wiggle', 'build', 'jump', 'hop', 'celebrate', 'chase', 'wave'])
-  expect(names('/clawd emote ')).toEqual(['moon_jelly'])
+  expect(names('/clawd emote ')).toEqual(['create', 'change', 'delete', 'preview', 'moon_jelly'])
+  expect(names('/clawd emote edit ')).toEqual(['moon_jelly'])
   expect(names('/clawd list ')).toEqual(['acts', 'made', 'emotes', 'minis'])
   expect(names('/clawd help ')).toEqual(['uml'])
   expect(menu('/clawd moo')).toMatchObject({ note: 'space writes it out', isOne: true, next: '' })
@@ -1108,9 +1143,10 @@ test('while /clawd is typed, a framed list shows what the word fits, a space wri
   expect(menu('/clawd act jump ')).toMatchObject({ title: '/clawd act jump', note: '[1-5] times in a row' })
   expect(menu('/clawd jump 3 ')).toBeUndefined()
   expect(menu('/clawd on ')).toBeUndefined()
-  expect(menu('/clawd create ')).toMatchObject({ title: '/clawd create', note: '<new_name> in snake_case', rows: [] })
-  expect(menu('/clawd create frog a fr')).toMatchObject({ title: '/clawd create frog', note: '[image path] <what it looks like>' })
-  expect(menu('/clawd change moon_jelly ')).toMatchObject({ title: '/clawd change moon_jelly', note: '[image path] <what to change>' })
+  expect(menu('/clawd emote create ')).toMatchObject({ title: '/clawd emote create', note: '<new_name> in snake_case', rows: [] })
+  expect(menu('/clawd emote create frog a fr')).toMatchObject({ title: '/clawd emote create', note: '[image path] <what it looks like>' })
+  expect(menu('/clawd emote change moon_jelly ')).toMatchObject({ title: '/clawd emote change', note: '[image path] <what to change>' })
+  expect(menu('/clawd emote moon_jelly ')).toBeUndefined()
   expect(menu('/clawd zz')).toMatchObject({ note: 'nothing is called "zz"', rows: [], next: '/clawd help shows what there is' })
 
   expect(writeOut('/clawd moo ', 11, NAMES)).toEqual({ text: '/clawd moon_jelly ', cursor: 18 })
@@ -1119,8 +1155,8 @@ test('while /clawd is typed, a framed list shows what the word fits, a space wri
   expect(writeOut('/clawd a1 ce ', 13, NAMES)).toEqual({ text: '/clawd a1 celebrate ', cursor: 20 })
   expect(writeOut('/clawd o ', 9, NAMES)).toBeUndefined()
   expect(writeOut('/clawd jump ', 12, NAMES)).toBeUndefined()
-  expect(writeOut('/clawd create fr ', 17, NAMES)).toBeUndefined()
-  expect(writeOut('/clawd delete m ', 16, NAMES)).toEqual({ text: '/clawd delete moon_jelly ', cursor: 25 })
+  expect(writeOut('/clawd emote create fr ', 23, NAMES)).toBeUndefined()
+  expect(writeOut('/clawd emote delete m ', 22, NAMES)).toEqual({ text: '/clawd emote delete moon_jelly ', cursor: 31 })
 
   expect(marksFor('/clawd ju 3', NAMES)).toEqual([{ start: 7, end: 9, isFit: true }])
   expect(marksFor('/clawd a1 zz', NAMES)).toEqual([
@@ -1253,4 +1289,202 @@ test('/clawd help uml draws in colour, each run by what it is, and other /clawd 
   })
   expect(await status.find({ text: 'engine row' })).toBeDefined()
   expect(await status.find({ key: 'uml-0' })).toBeUndefined()
+})
+
+test('while Remote Control is on, Clawd wears a gray antenna on the back edge of its head, leaning back with a green tip, on its own look and on an emote', async () => {
+  const idle = { kind: 'idle' as const, t0: 0, stage: 0, dur: 99, next: 99, look: 0 }
+  // The tip needs the band's second row of headroom, so the band stays 5 rows high.
+  const w = createWorld(20, 4, seeded(1))
+  w.queue = []
+  w.x = 9
+  w.act = { ...idle }
+  w.blinkAt = 999
+  step(w)
+  expect(bandRows(w)).toBe(4)
+  expect(rows(frameCells(w), 20)[0]).toBe('')
+  w.antenna = true
+  step(w)
+  expect(bandRows(w)).toBe(5)
+  // A terminal with room for 4 rows only shows the stalk.
+  expect(rows(frameCells(w), 20)).toEqual([' ▚', ' ▐▛███▜▌', '▝▜█████▛▘', `──▘▘─▝▝${'─'.repeat(13)}`])
+  expect(cellsWith(frameCells(w), 20, 0x5fd47a)).toEqual([])
+
+  resize(w, 20, 5)
+  expect(rows(frameCells(w), 20)).toEqual(['▗', ' ▚', ' ▐▛███▜▌', '▝▜█████▛▘', `──▘▘─▝▝${'─'.repeat(13)}`])
+  expect(cellsWith(frameCells(w), 20, 0xa8a8a8)).toEqual(['1,1'])
+  expect(cellsWith(frameCells(w), 20, 0x5fd47a)).toEqual(['0,0'])
+  // It stands on the back edge and leans away from where Clawd faces.
+  w.facing = -1
+  expect(rows(frameCells(w), 20).slice(0, 2)).toEqual(['        ▖', '       ▞'])
+  // Sitting, the head's top row is the lower half of a cell: the stalk is a pixel longer and the tip keeps its cell.
+  w.facing = 1
+  w.sitting = true
+  expect(cellsWith(frameCells(w), 20, 0x5fd47a)).toEqual(['0,0'])
+  expect(cellsWith(frameCells(w), 20, 0xa8a8a8)).toEqual(['0,1', '1,1'])
+  w.sitting = false
+  // The tip blinks: dim for 0.2 s every 1.6 s.
+  w.t = 1.5
+  expect(cellsWith(frameCells(w), 20, 0x5fd47a)).toEqual([])
+  expect(cellsWith(frameCells(w), 20, 0x2f6b3d)).toEqual(['0,0'])
+
+  const wearing = (look: object) => {
+    const v = createWorld(30, 4, seeded(6))
+    v.queue = []
+    v.x = 20
+    v.act = { ...idle }
+    v.blinkAt = 999
+    v.antenna = true
+    v.wearing = emoteFrom(look) as Emote
+    v.wornUntil = 99
+    step(v)
+    return v
+  }
+  // On a round head as tall as the MatSci octopus, the band grows to 6 rows and
+  // the antenna stands on the head's top back edge, not on a tentacle.
+  const HEAD = {
+    name: 'head',
+    title: 'a round head with tentacles',
+    color: '#649feb',
+    shapes: { normal: ['......######......', '....##########....', '...############...', '...###oo##oo###...', '...###oo##oo###...', '....##########....', '.###.###..###.###.'] },
+    legs: [1, 6, 11, 16],
+    legLength: 1,
+    wiggle: true,
+    armRow: 6,
+    arms: { out: [[1, 0]] },
+    tall: true,
+    dur: 99,
+  }
+  const v = wearing(HEAD)
+  expect(bandRows(v)).toBe(6)
+  v.antenna = false
+  expect(bandRows(v)).toBe(5)
+  v.antenna = true
+  resize(v, 30, 6)
+  expect(rows(frameCells(v), 30).slice(0, 2)).toEqual(['      ▗', '       ▚▗▄▄▖'])
+  expect(cellsWith(frameCells(v), 30, 0xa8a8a8)).toEqual(['7,1'])
+  expect(cellsWith(frameCells(v), 30, 0x5fd47a)).toEqual(['6,0'])
+  // On a look with a mark beside the head, it stands on the part with the eyes.
+  const HUH = {
+    name: 'huh',
+    title: 'huh?',
+    color: '#e8a33d',
+    shapes: { normal: ['..............##.', '.............#..#', '................#', '############...#.', '##o######o##.....', '############...#.', '############.....'] },
+    legs: [1, 3, 8, 10],
+    legLength: 1,
+    armRow: 4,
+    tall: true,
+    dur: 99,
+  }
+  const u = wearing(HUH)
+  resize(u, 30, bandRows(u))
+  expect(rows(frameCells(u), 30).slice(1, 3)).toEqual(['     ▖       ▄', '     ▝▖     ▝ ▌'])
+  expect(cellsWith(frameCells(u), 30, 0x5fd47a)).toEqual(['5,1'])
+  // A mini wears none.
+  spawnMini(v, 'agent-1', 'a task', 'general-purpose')
+  v.antenna = false
+  expect(cellsWith(frameCells(v), 30, 0xa8a8a8)).toEqual([])
+})
+
+test('the mod reads Remote Control from the environment every second and puts the antenna on and takes it off', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_700_000_000_000 })
+  mock.store(on)
+  const env: Record<string, string | undefined> = { HOME: '/home/t', CLAUDE_CLAWD_SEED: '7' }
+  on('env.get', async ($, e) => ({ value: env[e.name] }))
+  const blits: string[] = []
+  on('ui.log', async () => ({ value: undefined }))
+  on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  on('ui.blit', async ($, e) => {
+    if ('cells' in e) blits.push(e.cells)
+    return { value: {} }
+  })
+  on('session.start', async ($, e) => ({ cwd: e.cwd }))
+  on('ui.render', async ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return h(Text, { dimColor: true }, 'engine band') as RenderElement
+  })
+  const tips = (from: number) => blits.slice(from).filter(c => cellsWith(c, 100, 0xa8a8a8).length > 0)
+  const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} }
+  const mountRows = async () => {
+    const m = await $.ui.mount({ plugin: 'clawd', surface: 'terminal', component: 'AbovePrompt', props, viewport: { columns: 100, rows: 40 } })
+    return (await m.find({ type: 'Raster', key: 'clawd' }))?.props.rows
+  }
+  const run = (args: string) =>
+    $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
+
+  await $.session.start({ cwd: '/home/t/proj', surface: 'terminal', isInteractive: true })
+  await $.ui.mount({
+    plugin: 'clawd',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    viewport: { columns: 100, rows: 40 },
+  })
+  await clock.advance(2000) // Clawd walks in from the left
+  expect(tips(0)).toEqual([])
+  expect((await run(''))?.text).not.toContain('Remote Control')
+
+  env.CLAUDE_CODE_BRIDGE_SESSION_ID = 'session_01abc'
+  await clock.advance(2000)
+  expect(tips(0).length).toBeGreaterThan(5)
+  expect(await mountRows()).toBe(5)
+  expect((await run(''))?.text).toContain('Remote Control is on, so it wears an antenna.')
+
+  delete env.CLAUDE_CODE_BRIDGE_SESSION_ID
+  await clock.advance(1100)
+  const off = blits.length
+  await clock.advance(1000)
+  expect(blits.length).toBeGreaterThan(off)
+  expect(tips(off)).toEqual([])
+  expect(await mountRows()).toBe(4)
+})
+
+test('while Remote Control is on, the autopicker pauses and its setting stays on; it picks again when Remote Control ends', { timeoutMs: 20_000 }, async ($, on) => {
+  const clock = mock.clock(on, { now: 1_700_000_000_000 })
+  mock.store(on, { isAutopickOn: true })
+  const env: Record<string, string | undefined> = { HOME: '/home/t', CLAUDE_CLAWD_SEED: '7', CLAUDE_CODE_BRIDGE_SESSION_ID: 'session_01abc' }
+  on('env.get', async ($, e) => ({ value: env[e.name] }))
+  const triggers: string[] = []
+  const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+  on('ui.log', async () => ({ value: undefined }))
+  on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  on('ui.blit', async () => ({ value: {} }))
+  on('process.run', async () => ({
+    value: { exitCode: 0, stdout: 'Sat 17:00\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
+  on('model.complete', async ($, e) => {
+    triggers.push(/trigger: ([^\n]*)/.exec(e.prompt)?.[1] ?? e.prompt.slice(0, 40))
+    const text = '{"summary": "", "calls": [{"who": "clawd", "play": "wave"}], "why": "", "new": null}'
+    return { value: { isAnswered: true as const, text, usage } }
+  })
+  on('session.start', async ($, e) => ({ cwd: e.cwd }))
+  on('ui.render', async ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return h(Text, { dimColor: true }, 'engine band') as RenderElement
+  })
+  const run = (args: string) =>
+    $.command.run({ command: 'clawd', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
+
+  await $.session.start({ cwd: '/home/t/proj', surface: 'terminal', isInteractive: true })
+  await $.ui.mount({
+    plugin: 'clawd',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 40, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    viewport: { columns: 100, rows: 40 },
+  })
+  await clock.advance(61_000)
+  expect(triggers).toEqual([])
+  expect((await run(''))?.text).toContain('The autopicker is paused while Remote Control is on')
+  expect((await run('autopick on'))?.text).toContain('It is paused while Remote Control is on')
+  await clock.advance(61_000)
+  expect(triggers).toEqual([])
+  // Asked for, it picks once while paused.
+  await run('autopick now')
+  await clock.advance(200)
+  expect(triggers).toEqual(['asked with /clawd autopick now'])
+
+  delete env.CLAUDE_CODE_BRIDGE_SESSION_ID
+  await clock.advance(61_000)
+  expect(triggers.length).toBeGreaterThan(1)
+  expect((await run(''))?.text).not.toContain('paused')
 })

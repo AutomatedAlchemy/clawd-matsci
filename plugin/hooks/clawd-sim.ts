@@ -14,6 +14,9 @@ const DT = TICK_MS / 1000
 const GRAVITY = 120 // sub-pixels per second squared
 export const WALK = 12 // sub-pixels per second
 const RUN = 36
+// A wiggly look's ripple: one stride per this many sub-pixels walked, twice as
+// many running, so a sprint's wave stays slower than the frames.
+const STRIDE = 8
 const EASE_S = 0.4 // an eased move takes this long to reach full speed, and to stop from it
 export const SLEEP_AFTER_S = 180 // idle seconds without any session event
 export const MINI_STALE_S = 900 // a mini whose subagent was silent this long leaves
@@ -23,6 +26,8 @@ const LAYERS = [4, 3, 2, 1] // bricks per pile layer, bottom up, as far as the b
 /** The band's height in rows, and its height while a body does a big jump. */
 export const BAND_ROWS = 4
 export const TALL_ROWS = 5
+/** The band's height while Clawd wears a tall look and the Remote Control antenna. */
+export const ANTENNA_ROWS = 6
 const TALL_HOLD_S = 0.6 // the band stays tall this long after a big jump, so a second one does not resize it
 export const READ_HOLD_S = 1.2 // the scroll stays up this long after the last reading call
 
@@ -39,6 +44,9 @@ const WHITE = 0xf0f0f0
 const PAPER = 0xe8dcb8 // the scroll a reading body holds
 const ROLL = 0x8b5e34 // its rolled ends
 const SWEAT = 0x7fd4ff
+const ANTENNA = 0xa8a8a8 // the antenna Clawd wears while Remote Control is on
+const SIGNAL = 0x5fd47a // its tip
+const SIGNAL_DIM = 0x2f6b3d // its tip as it blinks
 const FLOOR = 0x7a7a7a // the floor line, grey like the prompt border
 export const FLOOR_TEXT = '#7a7a7a' // FLOOR as a Text color, for the menu's frame below the band
 const LABEL = 0x9a9aa8 // the line at the top right: what was picked
@@ -248,6 +256,7 @@ export type Body = {
   vy: number
   facing: 1 | -1
   walked: number // distance travelled; drives the gait
+  strides: number // a wiggly look's strides taken; drives its ripple
   dustAt: number
   landedAt: number
   blinkAt: number
@@ -309,6 +318,7 @@ export type World = Body & {
   due: { at: number; who: string; acts: Act[] }[] // model calls waiting for their time
   base: Emote | null // the look Clawd wears whenever it wears no other; null: Clawd's own
   baseWorn: Emote | null // the base as Clawd wears it now; null while it wears another look or none
+  antenna: boolean // Remote Control is on: Clawd wears an antenna on whatever look it has
 }
 
 // --- setup -------------------------------------------------------------------
@@ -324,6 +334,7 @@ function newBody(id: string, color: number, isMini: boolean, x: number): Body {
     vy: 0,
     facing: 1,
     walked: 0,
+    strides: 0,
     dustAt: 0,
     landedAt: -1,
     blinkAt: 2,
@@ -365,6 +376,7 @@ export function createWorld(cols: number, rows: number, rand: () => number = Mat
     due: [],
     base: null,
     baseWorn: null,
+    antenna: false,
   }
   resize(w, cols, rows)
   // Clawd walks in from the left and says hello.
@@ -571,6 +583,12 @@ function leave(w: World, mini: Mini, reason: string): void {
 /** True while a body wants the tall band: during a big jump and shortly after. */
 export function wantsTall(w: World): boolean {
   return w.t < w.tallUntil
+}
+
+/** The band's height in rows that the world wants now: a row more while tall, two with the antenna on a tall look. */
+export function bandRows(w: World): number {
+  if (!wantsTall(w)) return BAND_ROWS
+  return w.antenna && w.wearing?.isTall ? ANTENNA_ROWS : TALL_ROWS
 }
 
 /** `/clawd [who] <act> [n]`: do it now, `n` times in a row; false when `who` is not there. */
@@ -985,6 +1003,7 @@ export function step(w: World): void {
     if (c === w) wearBase(w)
     if (c.wearing?.isTall) w.tallUntil = w.t + TALL_HOLD_S
   }
+  if (w.antenna) w.tallUntil = w.t + TALL_HOLD_S // the antenna's tip needs the second row of headroom
   moveParticles(w)
   moveSpark(w)
   for (const c of bodies(w)) {
@@ -1424,6 +1443,7 @@ function physics(w: World, c: Body): void {
   const before = c.x
   c.x += c.vx * DT
   c.walked += Math.abs(c.x - before)
+  c.strides += Math.abs(c.x - before) / (Math.abs(c.vx) >= RUN * 0.7 ? 2 * STRIDE : STRIDE)
   if (c.vx > 0.1) c.facing = 1
   else if (c.vx < -0.1) c.facing = -1
   if (!isAirborne(c) && Math.abs(c.vx) >= RUN * 0.7 && c.walked - c.dustAt > 7) {
@@ -1690,8 +1710,8 @@ function shapeNow(w: World, c: Body): Shape {
 // A body in an emote's look. The same motion drives it as Clawd: the shape
 // follows the jump, the eyes look and blink, the legs follow the distance
 // walked. Wiggly legs sway at the tips while standing, trail straight while
-// rising and flare out while falling. Walking, a ripple runs from the back
-// tentacle to the front one. Running, the tips trail.
+// rising and flare out while falling. Walking and running, a ripple runs from
+// the back tentacle to the front one.
 function drawWorn(w: World, c: Body, look: Emote, put: Put): void {
   const airborne = isAirborne(c)
   const speed = Math.abs(c.vx)
@@ -1714,29 +1734,33 @@ function drawWorn(w: World, c: Body, look: Emote, put: Put): void {
     if (phase === 3) legs = legs.filter((_, k) => k % 2 === 1)
   }
   // A wiggly walk ripples: a wave runs from the back tentacle to the front one, and each
-  // tip in turn lifts, reaches forward and slides back. Running, the tips trail.
+  // tip in turn lifts, reaches forward and slides back. Running, it ripples with longer
+  // strides (user, 2026-10-07: the leg animation also when it sprints; the tips trailed
+  // until then).
   const crawl = look.isWiggly && !airborne && speed > 0.5 && legLen > 0
-  const running = speed >= RUN * 0.7
   const nLegs = look.legs.length
   const swing = nLegs > 1 ? 1 / nLegs : 0 // the share of a stride a tip is lifted
   // How far leg k is through its stride, 0 to 1. The arms are k = -1 behind and k = nLegs in front.
   const stride = (k: number) => {
-    const v = c.walked / 8 - k / nLegs
+    const v = c.strides - k / nLegs
     return v - Math.floor(v)
   }
-  const lifted = (k: number) => crawl && !running && stride(k) < swing
+  const lifted = (k: number) => crawl && stride(k) < swing
   const wave = speed > 0.5 ? c.walked / 2.5 : w.t * 2.5
   const sway = (k: number, side: number): number => {
     if (!look.isWiggly) return 0
     if (airborne) return c.vy > 0 ? 0 : side
-    if (crawl) return running ? -1 : Math.round(1 - (2 * (stride(k) - swing)) / (1 - swing))
+    if (crawl) return Math.round(1 - (2 * (stride(k) - swing)) / (1 - swing))
     return Math.round(Math.sin(wave + k * 2.1))
   }
 
   const feet = ground(w) - Math.round(c.y)
   const top = feet - legLen - h + 1
   const left = Math.round(c.x - sw / 2)
-  const lean = !airborne && speed >= RUN * 0.7 ? 1 : 0
+  // Running, the top leans forward; carrying a brick on its head, the body
+  // stays upright, since its arms hang low and the lean would leave a notch
+  // at the front shoulder (user, 2026-10-07).
+  const lean = !airborne && !c.carrying && speed >= RUN * 0.7 ? 1 : 0
   const at = (lx: number, row: number, color: number) =>
     put(c.facing === 1 ? left + lx : left + sw - 1 - lx, top + row, color)
 
@@ -1780,7 +1804,7 @@ function drawWorn(w: World, c: Body, look: Emote, put: Put): void {
     const flip = Math.floor(w.t * 6) % 2 === 1
     const { up, down, raised } = look.armPoses
     // Wiggly arms curl their tips up now and then. Crawling, each curls for the first half of its stride.
-    const lift = (k: number, at: number) => (crawl ? (!running && stride(at) < 0.5 ? 1 : 0) : Math.max(0, sway(k, 0)))
+    const lift = (k: number, at: number) => (crawl ? (stride(at) < 0.5 ? 1 : 0) : Math.max(0, sway(k, 0)))
     const curl = (k: number, at: number) => look.armPoses.out.map(([dx, dy], i, all): [number, number] =>
       look.isWiggly && i === all.length - 1 ? [dx, dy - lift(k, at)] : [dx, dy])
     let back = curl(6, -1)
@@ -1820,6 +1844,14 @@ function drawWorn(w: World, c: Body, look: Emote, put: Put): void {
     const last = Math.max(line.lastIndexOf('#'), line.lastIndexOf('o'), line.lastIndexOf('+'))
     const reach = Math.max(1, ...look.armPoses.out.map(([dx]) => dx))
     drawScroll(c, left, sw, (last >= 0 ? last : sw - 1) + reach, [ar - 2, ar - 1, ar, ar + 1], at)
+  }
+
+  if (w.antenna && !c.isMini) {
+    const mount = antennaMount(rows, top + Math.round(c.y))
+    if (mount) {
+      const lx = mount.x + (lean && mount.row < leanRows ? 1 : 0)
+      drawAntenna(w, c, c.facing === 1 ? left + lx : left + sw - 1 - lx, top + mount.row, put)
+    }
   }
 
   if (c.carrying) {
@@ -1864,7 +1896,10 @@ function drawBody(w: World, c: Body, put: Put): void {
   const bottom = feet - legLen
   const top = bottom - s.h + 1
   const left = Math.round(c.x - s.w / 2)
-  const lean = !airborne && speed >= RUN * 0.7 ? 1 : 0
+  // Running, the top leans forward; carrying a brick on its head, the body
+  // stays upright, since its arms hang low and the lean would leave a notch
+  // at the front shoulder (user, 2026-10-07).
+  const lean = !airborne && !c.carrying && speed >= RUN * 0.7 ? 1 : 0
   const at = (lx: number, row: number, color: number) =>
     put(c.facing === 1 ? left + lx : left + s.w - 1 - lx, top + row, color)
 
@@ -1912,6 +1947,11 @@ function drawBody(w: World, c: Body, put: Put): void {
     for (let r = 1; r <= legLen; r++) at(lx, s.h - 1 + r, c.color)
   }
 
+  if (w.antenna && !c.isMini) {
+    const ax = lean // the back edge of the top row, which leans with the run
+    drawAntenna(w, c, c.facing === 1 ? left + ax : left + s.w - 1 - ax, top, put)
+  }
+
   if (c.carrying) {
     const bx = Math.round(s.w / 2) - 2
     for (let dy = -2; dy < 0; dy++) for (let dx = 0; dx < 4; dx++) at(bx + dx, dy, BRICK)
@@ -1931,6 +1971,66 @@ function drawScroll(c: Body, left: number, width: number, from: number, rows: nu
     at(lx, row, color)
     at(lx + 1, row, color)
   })
+}
+
+/**
+ * Where the antenna stands on a look: on the back edge of the part that holds
+ * the eyes (pixels 8-connected to an `o`, or all pixels when it has none), so
+ * not on a tentacle or a mark beside the head. On the part's top row, or, on a
+ * round head, as far down its back edge as the whole antenna needs to fit in
+ * the band (user, 2026-10-08, after a sheet of placements on the real emotes).
+ * `restTop` is the look's top row with Clawd on the ground, so the mount does
+ * not slide during a hop. Local x from the back, and the row in the look.
+ */
+function antennaMount(rows: string[], restTop: number): { x: number; row: number } | null {
+  const isPixel = (ch: string | undefined) => ch === '#' || ch === 'o' || ch === '+'
+  const part = new Set<string>()
+  const todo: [number, number][] = []
+  rows.forEach((line, r) => [...line].forEach((ch, x) => ch === 'o' && todo.push([x, r])))
+  if (todo.length === 0) rows.forEach((line, r) => [...line].forEach((ch, x) => isPixel(ch) && part.add(`${x},${r}`)))
+  for (const [x, r] of todo) part.add(`${x},${r}`)
+  while (todo.length > 0) {
+    const [x, r] = todo.pop() as [number, number]
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const key = `${x + dx},${r + dy}`
+        if (!part.has(key) && isPixel(rows[r + dy]?.[x + dx])) {
+          part.add(key)
+          todo.push([x + dx, r + dy])
+        }
+      }
+    }
+  }
+  let first: { x: number; row: number } | null = null
+  for (let row = 0; row < rows.length; row++) {
+    const x = [...(rows[row] ?? '')].findIndex((_, col) => part.has(`${col},${row}`))
+    if (x < 0) continue
+    first ??= { x, row }
+    if (antennaTip(restTop + row) >= 0) return { x, row }
+  }
+  return first
+}
+
+/** The row of the antenna's tip over a head whose top row is `top`: alone in the lower half of a cell. */
+function antennaTip(top: number): number {
+  return top - 3 - (((top % 2) + 2) % 2)
+}
+
+/**
+ * The antenna Clawd wears while Remote Control is on: a gray stalk from the
+ * head pixel at screen column x, whose top is row `top`, leaning back a pixel
+ * per row, with a green tip that blinks (user, 2026-10-08: gray, a coloured tip,
+ * "at an angle, not that static straight up"). A cell shows two colours, so the
+ * tip sits alone in the lower half of a cell: the stalk is two pixels high, or
+ * three where the head's top row is the lower half of a cell. The tip needs the
+ * band's second row of headroom, so the band stays 5 rows high while the
+ * antenna is on, and 6 while Clawd wears a tall look (`bandRows`).
+ */
+function drawAntenna(w: World, c: Body, x: number, top: number, put: Put): void {
+  const tip = antennaTip(top)
+  const at = (row: number) => x - c.facing * (top - 1 - row)
+  for (let row = top - 1; row > tip; row--) put(at(row), row, ANTENNA)
+  put(at(tip), tip, w.t % 1.6 < 1.4 ? SIGNAL : SIGNAL_DIM)
 }
 
 /** The band as Raster cells: standard base64 of [codePoint, fg, bg] u32 triplets. */
@@ -1977,8 +2077,8 @@ export function frameCells(w: World): string {
     edge.set(w.cols - 1, rule('╮'))
   }
 
-  // An emote's colours, its prop's, its tool's and the scroll count as a body's; Clawd's own colour, whatever it is now, comes first.
-  const bodyColors = new Set([...BODY_COLORS, PAPER, ROLL])
+  // An emote's colours, its prop's, its tool's, the scroll and the antenna count as a body's; Clawd's own colour, whatever it is now, comes first.
+  const bodyColors = new Set([...BODY_COLORS, PAPER, ROLL, ANTENNA, SIGNAL, SIGNAL_DIM])
   for (const b of bodies(w)) {
     if (b.wearing) bodyColors.add(b.wearing.color).add(b.wearing.accent)
     if (b.wearing?.prop) bodyColors.add(b.wearing.prop.color)
