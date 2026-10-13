@@ -8,10 +8,10 @@ wiggling tentacles, runs around in a strip above your prompt and reacts to the s
 It is the `clawd` mod with the octopus as its skin, so the mod and its commands
 call it Clawd. An emote that turns Clawd into something else (`/clawd emote ...`) takes
 over for a while, then the octopus comes back; one that holds a thing puts it in the
-octopus's arm. `/clawd skin none` shows Clawd's own body for a session. Subagents get
-small Clawds, the creature from the Claude Code banner. The
-octopus is two rows taller than Clawd, so the strip is 5 rows high instead of 4; in a
-terminal too short for that, Clawd shows in its own look. The plain version is
+octopus's arm. Subagents get small Clawds, the creature from the Claude Code banner.
+The octopus is taller than Clawd, so the strip above the prompt is 5 rows high instead
+of 4. When the terminal leaves fewer rows for the strip, the top of the octopus's head
+is cut off. The plain version is
 [Probst1nator/clawd](https://github.com/Probst1nator/clawd). Install one or the other:
 both are the plugin `clawd`.
 
@@ -46,14 +46,15 @@ so older versions may not load it.
 | `/clawd help` | every command; `help uml` draws how Clawd behaves |
 | `/clawd jump 3` | play an act now, up to 5 times in a row |
 | `/clawd a1 wave` | a subagent's small Clawd plays an act |
+| `/clawd act create`, `change`, `delete`, `preview` | write, rewrite, remove or picture an act |
 | `/clawd list acts` | the acts; also `made`, `emotes`, `skins`, `minis` |
 | `/clawd emote <emote>` | for a while, Clawd turns into an emote's look or holds its thing |
 | `/clawd emote create`, `change`, `delete`, `preview` | make, redraw, remove or picture an emote |
-| `/clawd skin <skin>`, `none`, `auto` | the body Clawd wears all the time, for this session |
+| `/clawd skin <skin>`, `auto` | the body Clawd wears all the time, for this session |
 | `/clawd skin create`, `change`, `delete`, `preview` | make, redraw, remove or picture a skin |
 | `/clawd on`, `/clawd off` | show or hide Clawd |
 | `/clawd autopick` | switch a model choosing what Clawd plays on or off (see below); `now` chooses once; `haiku`, `sonnet` or `opus` sets the model |
-| `/clawd debug` | switch showing each autopick's whole reply in the transcript on or off |
+| `/clawd debug` | switch showing each autopick's request and whole reply in the transcript on or off |
 | `/clawd trace` | switch writing each autopick to a file on or off |
 
 While you type `/clawd `, a list above the prompt shows what fits, and a space writes out
@@ -66,19 +67,24 @@ By default the mod makes no model calls. Clawd picks random acts by itself.
 `/clawd autopick` hands that choice to a model (Haiku). It reads what happens in the
 session and picks what Clawd and the small Clawds play: after each prompt and turn, and
 every 10 to 60 seconds. In a busy session that is about 100 calls an hour of about 1,500
-tokens each, and it may have Opus write up to 5 new acts or looks a day. All of it runs
-through your own Claude Code login and counts against your usage. `/clawd autopick`
+tokens each, and it may have Opus write up to 5 new acts, emotes or skins a day. A skin
+it picks stays on for the rest of the session, unless you chose one with `/clawd skin`.
+All of it runs through your own Claude Code login and counts against your usage. `/clawd autopick`
 again stops it. `/clawd autopick sonnet` or `opus` has that model pick instead, at a
 higher cost per pick, and `/clawd autopick haiku` goes back. Both settings are remembered.
 
 While Remote Control is on, Clawd wears an antenna and the autopicker pauses, so Clawd
 plays random acts. When Remote Control ends, the autopicker goes on as it was set.
 
-`/clawd emote create <name> <what it looks like>` has Opus draw a new emote: a look Clawd
+`/clawd emote create <name> [what it looks like]` has Opus draw a new emote: a look Clawd
 turns into for a while, or a thing it holds or sets down beside it while it keeps its body.
-`/clawd skin create <name> <what it looks like>` draws a skin, a body Clawd wears all the
-time. `/clawd emote change` and `/clawd skin change` redraw one. Each runs only when you
-type it.
+`/clawd skin create <name> [what it looks like]` draws a skin, a body Clawd wears all the
+time. `/clawd act create <name> [what it does]` has Opus write a new act. The name alone
+is enough: `/clawd skin create claude_with_glasses` draws what the name says. For a
+sentence such as `/clawd skin create claude with glasses`, Haiku picks the name.
+`/clawd act change <act> <what to change>`, `/clawd emote change` and `/clawd skin change`
+change one; with nothing after the name, they make it again from scratch. Each runs only
+when you type it.
 
 ## Where it keeps things
 
